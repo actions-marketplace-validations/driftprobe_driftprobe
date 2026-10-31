@@ -59,7 +59,7 @@ source:
   type: http
   url: https://api.example.com/products?q=shoes
   headers:
-    Authorization: Bearer ${API_TOKEN}
+    Authorization: Bearer ${DRIFTPROBE_API_TOKEN}
 items: results
 expect:
   min_items: 20
@@ -77,9 +77,11 @@ expect:
 | `max_age` | The newest date in the field is too old (`30m`, `48h`, `7d`) |
 | `min_distinct` | Every item shares the same value, like a price stuck at 0 |
 
+A field listed in a contract must carry a value in at least one item, whatever its rules. `min_coverage: 0` makes it optional. An unknown rule is refused, so a typo cannot silently turn a check off.
+
 Nested fields use dots, and arrays use `[]`: `seller.city`, `offers[].price`.
 
-Secrets are read from the environment with `${NAME}` and never written to a contract.
+Secrets are read from the environment with `${DRIFTPROBE_NAME}` and never written to a contract. A contract only reads variables that start with `DRIFTPROBE_`, so a contract you did not write cannot reach your other secrets.
 
 ## Sources
 
@@ -99,6 +101,10 @@ driftprobe learn --observed .driftprobe/observed.jsonl --out-dir contracts
 
 The proxy understands MCP over HTTP, including server-sent events, and groups calls by tool name.
 
+A contract learned with `--observed` checks the proxy's latest observation and counts the time passed since. After 7 days without one, it reports "could not be checked" instead of staying green: set `source.max_silence` (`30d`) if your agent runs less often.
+
+`check` follows redirects on the same host only: another host would receive your headers, so it fails and asks you to point the contract there directly. Responses above 50 MB are refused.
+
 ## In CI
 
 ```yaml
@@ -115,16 +121,20 @@ jobs:
         with:
           contracts: contracts/*.yaml
         env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
+          DRIFTPROBE_API_TOKEN: ${{ secrets.API_TOKEN }}
 ```
+
+The Action runs the code of its own tag, with the dependencies of its lockfile.
 
 Exit codes: `0` all good, `1` a contract is broken, `2` a source could not be checked. `--github` adds annotations, `--json` prints machine readable results.
 
 ## What is stored
 
-Shapes, never content. For each field: how many items carry a value, which types were seen, how many distinct values, and the age of the newest date. Keys that do not read like schema names (emails, identifiers, dotted names, maps with very many keys) are collapsed to `*`, and so are path segments that look like ids or tokens.
+Shapes, never values. For each field: how many items carry a value, which types were seen, how many distinct values, and the age of the newest date. Keys that do not read like schema names (emails, identifiers, dotted names, maps with very many keys) are collapsed to `*`, and so are path segments that look like ids or tokens.
 
-The proxy listens on `127.0.0.1` only, answers local requests only, always forwards to the configured upstream, and does not store query strings, headers or request bodies. When `learn` finds a credential in a URL, the contract gets a `${VARIABLE}` instead.
+Names are kept, because a contract is made of them. A person's name used as a JSON key or as a path word (`/users/jean-dupont`) reads like a schema name and ends up in `observed.jsonl` and in the contract: read a contract before you commit it.
+
+The proxy listens on `127.0.0.1` only, answers local requests only, always forwards to the configured upstream, and does not store query strings, headers or request bodies. It rotates `observed.jsonl` at 50 MB and keeps one previous file. When `learn` finds what looks like a credential in a URL or in tool arguments, the contract gets a `${DRIFTPROBE_VARIABLE}` instead and tells you which one to set.
 
 ## Status
 

@@ -1,6 +1,6 @@
 {
   "name": "driftprobe",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Continuous data contract tests for AI agents: catch the API or MCP tool that still answers 200 but no longer delivers what your agent needs.",
   "type": "module",
   "license": "MIT",

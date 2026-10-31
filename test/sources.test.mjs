@@ -14,8 +14,8 @@ import { payloadFromToolResult, classifyError, listAllTools, withMcpClient } fro
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 
 test('expands environment variables and refuses missing ones', () => {
-  assert.equal(expandEnv('Bearer ${TOKEN}', { TOKEN: 'abc' }), 'Bearer abc');
-  assert.throws(() => expandEnv('${NOPE}', {}), /NOPE/);
+  assert.equal(expandEnv('Bearer ${DRIFTPROBE_TOKEN}', { DRIFTPROBE_TOKEN: 'abc' }), 'Bearer abc');
+  assert.throws(() => expandEnv('${DRIFTPROBE_NOPE}', {}), /DRIFTPROBE_NOPE/);
 });
 
 test('reads a local file relative to the contract', async () => {
@@ -34,8 +34,8 @@ test('http source sends expanded headers and returns JSON', async (t) => {
   t.after(() => server.close());
   const port = await listen(server);
   const doc = await loadDocument(
-    { type: 'http', url: `http://127.0.0.1:${port}/x`, headers: { Authorization: 'Bearer ${T}' } },
-    { env: { T: 'tok' } },
+    { type: 'http', url: `http://127.0.0.1:${port}/x`, headers: { Authorization: 'Bearer ${DRIFTPROBE_T}' } },
+    { env: { DRIFTPROBE_T: 'tok' } },
   );
   assert.deepEqual(doc, [{ a: 1 }]);
   assert.equal(seen, 'Bearer tok');
@@ -154,7 +154,7 @@ test('a connection that never completes is given up on', async (t) => {
 test('observed source survives a half written last line', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'driftprobe-'));
   const file = join(dir, 'observed.jsonl');
-  await writeFile(file, JSON.stringify({ at: 'a', key: 'k', profile: { itemCount: 7, fields: {} } }) + '\n{"at":"b","key":"k","prof');
+  await writeFile(file, JSON.stringify({ at: new Date().toISOString(), key: 'k', profile: { itemCount: 7, fields: {} } }) + '\n{"at":"b","key":"k","prof');
   assert.equal((await loadProfile({ source: { type: 'observed', path: file, key: 'k' } }, {})).itemCount, 7);
 });
 
@@ -163,7 +163,7 @@ test('observed source returns the newest profile for its key', async () => {
   const file = join(dir, 'observed.jsonl');
   const line = (at, key, itemCount) => JSON.stringify({ at, key, profile: { itemCount, fields: {} } });
   await writeFile(file, [line('2026-10-01', 'GET /a', 1), line('2026-10-02', 'GET /a', 2), line('2026-10-03', 'GET /b', 3)].join('\n') + '\n');
-  const profile = await loadProfile({ source: { type: 'observed', path: file, key: 'GET /a' } }, {});
+  const profile = await loadProfile({ source: { type: 'observed', path: file, key: 'GET /a' } }, { now: new Date('2026-10-04') });
   assert.equal(profile.itemCount, 2);
   await assert.rejects(loadProfile({ source: { type: 'observed', path: file, key: 'GET /zzz' } }, {}), SourceError);
 });

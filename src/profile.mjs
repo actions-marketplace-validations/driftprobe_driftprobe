@@ -102,10 +102,12 @@ function largestArray(node, path, depth) {
 
 /** Locates the list of records in a response. Returns null when an explicit path leads nowhere. */
 export function findItems(doc, itemsPath) {
+  if (doc === null || doc === undefined) return null;
   if (itemsPath) {
     const node = walkPath(doc, itemsPath);
-    if (node === undefined) return null;
-    return { path: itemsPath, items: Array.isArray(node) ? node : [node] };
+    if (Array.isArray(node)) return { path: itemsPath, items: node };
+    // A named path leads to records: null or "maintenance" in their place means the list is gone.
+    return isObject(node) || itemsPath === '.' ? { path: itemsPath, items: [node] } : null;
   }
   if (Array.isArray(doc)) return { path: '.', items: doc };
   if (!isObject(doc)) return { path: '.', items: [doc] };

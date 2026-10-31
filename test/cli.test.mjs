@@ -74,7 +74,7 @@ test('a credential found in a learned URL never reaches the contract', async (t)
   assert.match(learned.stderr, /API_KEY/);
   const text = await readFile(contract, 'utf8');
   assert.ok(!text.includes('super-secret-value'));
-  assert.match(text, /api_key=\$\{API_KEY\}/);
+  assert.match(text, /api_key=\$\{DRIFTPROBE_API_KEY\}/);
   assert.match(text, /q=shoes/);
 });
 
@@ -97,7 +97,8 @@ test('learn --observed writes one contract per key, with a path relative to the 
   const dir = await mkdtemp(join(tmpdir(), 'driftprobe-'));
   const observed = join(dir, 'observed.jsonl');
   const profile = { itemsPath: 'results', itemCount: 10, fields: { price: { usable: 10, kinds: { number: 10 }, distinct: 10 } } };
-  await writeFile(observed, `${JSON.stringify({ at: '2026-10-31', key: 'GET /v1/items', profile })}\n${JSON.stringify({ at: '2026-10-31', key: 'mcp:search', profile })}\n`);
+  const at = new Date().toISOString();
+  await writeFile(observed, `${JSON.stringify({ at, key: 'GET /v1/items', profile })}\n${JSON.stringify({ at, key: 'mcp:search', profile })}\n`);
   const out = join(dir, 'contracts');
   assert.equal(run('learn', '--observed', observed, '--out-dir', out).status, 0);
   const text = await readFile(join(out, 'GET_v1_items.yaml'), 'utf8');

@@ -2,6 +2,8 @@
 import { parse, stringify } from 'yaml';
 
 export const FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'array', 'object'];
+const FIELD_RULES = ['type', 'min_coverage', 'max_age', 'min_distinct'];
+const EXPECT_KEYS = ['min_items', 'fields'];
 const SOURCE_TYPES = ['http', 'mcp', 'file', 'observed'];
 const DURATION_RE = /^(\d+(?:\.\d+)?)(m|h|d)$/;
 const HOURS_PER_UNIT = { m: 1 / 60, h: 1, d: 24 };
@@ -19,14 +21,16 @@ const FRESHNESS_KEY_RE = /updated|modified|published|posted|created|fetched|time
 
 export class ContractError extends Error {}
 
-export function parseDurationHours(text) {
+export function parseDurationHours(text, label = 'max_age') {
   const match = DURATION_RE.exec(String(text));
-  if (!match) throw new ContractError(`invalid max_age "${text}": use a number followed by m, h or d, like 48h`);
+  if (!match) throw new ContractError(`invalid ${label} "${text}": use a number followed by m, h or d, like 48h`);
   return Number(match[1]) * HOURS_PER_UNIT[match[2]];
 }
 
 function validateField(name, rule) {
   if (rule === null || typeof rule !== 'object') throw new ContractError(`field "${name}": expected a mapping of rules`);
+  const unknownRule = Object.keys(rule).find((key) => !FIELD_RULES.includes(key));
+  if (unknownRule) throw new ContractError(`field "${name}": unknown rule "${unknownRule}" (expected ${FIELD_RULES.join(', ')})`);
   if (rule.type !== undefined && !FIELD_TYPES.includes(rule.type)) {
     throw new ContractError(`field "${name}": unknown type "${rule.type}" (expected ${FIELD_TYPES.join(', ')})`);
   }
@@ -48,6 +52,7 @@ function validateSource(source) {
   for (const key of required) {
     if (!source[key]) throw new ContractError(`source of type ${source.type} needs "${key}"`);
   }
+  if (source.max_silence !== undefined) parseDurationHours(source.max_silence, 'max_silence');
 }
 
 export function parseContract(text) {
@@ -61,6 +66,8 @@ export function parseContract(text) {
   if (contract.version !== 1) throw new ContractError(`unsupported version "${contract.version}" (expected 1)`);
   if (!contract.name) throw new ContractError('missing name');
   validateSource(contract.source);
+  const unknownKey = Object.keys(contract.expect ?? {}).find((key) => !EXPECT_KEYS.includes(key));
+  if (unknownKey) throw new ContractError(`expect: unknown key "${unknownKey}" (expected ${EXPECT_KEYS.join(', ')})`);
   const minItems = contract.expect?.min_items;
   if (minItems !== undefined && !(Number.isInteger(minItems) && minItems >= 0)) {
     throw new ContractError('expect.min_items must be a non negative integer');
@@ -73,6 +80,9 @@ export function serializeContract(contract) {
   return stringify(contract);
 }
 
+// A spread would overflow the stack on a very long observation log.
+const minOf = (values) => values.reduce((lowest, value) => Math.min(lowest, value), Infinity);
+const maxOf = (values) => values.reduce((highest, value) => Math.max(highest, value), -Infinity);
 const floor2 = (value) => Math.floor(value * 100 + 1e-9) / 100;
 const coverageOf = (profile, name) => (profile.itemCount ? (profile.fields[name]?.usable ?? 0) / profile.itemCount : 0);
 
@@ -95,7 +105,7 @@ function learnedMaxAge(profiles, name) {
   // With several observations, require proof that this column does get refreshed:
   // a date that only grows older is a static dataset or a cadence longer than what we saw.
   if (ages.length >= MIN_RUNS_FOR_CADENCE && !ages.some((age, i) => i > 0 && age <= ages[i - 1])) return undefined;
-  const oldest = Math.max(...ages);
+  const oldest = maxOf(ages);
   if (oldest > MAX_LEARNED_AGE_HOURS) return undefined;
   const hours = Math.ceil(Math.max(MIN_FRESHNESS_HOURS, oldest * FRESHNESS_FACTOR));
   return hours % 24 === 0 ? `${hours / 24}d` : `${hours}h`;
@@ -108,7 +118,7 @@ function coverageFloor(profiles, name) {
     const noise = NOISE_SIGMAS * Math.sqrt((share * (1 - share)) / Math.max(profile.itemCount, 1));
     return share - Math.max(COVERAGE_MARGIN, noise);
   });
-  return Math.max(0.01, floor2(Math.min(...floors)));
+  return Math.max(0.01, floor2(minOf(floors)));
 }
 
 function learnField(profiles, name) {
@@ -131,13 +141,13 @@ function chooseFields(profiles, wanted) {
     if (unknown.length) throw new ContractError(`never observed: ${unknown.join(', ')} (seen: ${[...observed].join(', ')})`);
     return wanted;
   }
-  return [...observed].filter((name) => Math.min(...profiles.map((profile) => coverageOf(profile, name))) >= MIN_KEPT_COVERAGE);
+  return [...observed].filter((name) => minOf(profiles.map((profile) => coverageOf(profile, name))) >= MIN_KEPT_COVERAGE);
 }
 
 /** Builds a contract from one or more observations, keeping a margin under the worst one. */
 export function learnContract(profiles, { name, source, fields }) {
   if (!profiles.length) throw new ContractError('nothing to learn from');
-  const minItems = Math.min(...profiles.map((profile) => profile.itemCount));
+  const minItems = minOf(profiles.map((profile) => profile.itemCount));
   const chosen = chooseFields(profiles, fields);
   return {
     version: 1,

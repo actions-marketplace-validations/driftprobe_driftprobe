@@ -8,7 +8,8 @@ import { loadDocument, loadProfile, SourceError } from '../src/sources.mjs';
 import { profileDocument } from '../src/profile.mjs';
 import { startRecorder } from '../src/record.mjs';
 import { parseJsonLines } from '../src/jsonl.mjs';
-import { exitCode, formatGithub, formatHuman } from '../src/report.mjs';
+import { exitCode, formatGithub, formatHuman, neutralizeCommands } from '../src/report.mjs';
+import { withoutSecretArguments, withoutSecrets } from '../src/secrets.mjs';
 
 const DEFAULT_OBSERVED = '.driftprobe/observed.jsonl';
 
@@ -59,29 +60,26 @@ async function runRecord(values) {
   console.error(`driftprobe: point your agent at http://127.0.0.1:${recorder.port} (forwarding to ${new URL(values.upstream).origin}, recording to ${out})`);
 }
 
-const SECRET_PARAM_RE = /key|token|secret|auth|sig|pass|cred/i;
+const warnAboutSecret = (variable) => console.error(`driftprobe: a credential was kept out of the contract, set ${variable} in the environment to check it`);
 
-/** A contract gets committed: a credential found in a URL is replaced by an environment variable. */
-function withoutSecrets(text) {
-  const url = new URL(text);
-  if (url.username || url.password) throw new ContractError('credentials in the URL: use ${VARIABLES} and the environment instead');
-  const parts = [];
-  for (const [name, value] of url.searchParams) {
-    if (!SECRET_PARAM_RE.test(name)) {
-      parts.push(encodeURIComponent(name) + '=' + encodeURIComponent(value));
-      continue;
-    }
-    const variable = name.toUpperCase().replace(/\W+/g, '_');
-    parts.push(encodeURIComponent(name) + '=${' + variable + '}');
-    console.error('driftprobe: ' + name + ' kept out of the contract, set ' + variable + ' in the environment to check it');
+function storedSource(source) {
+  if (!source.url) return source;
+  const stored = { ...source, url: withoutSecrets(source.url, warnAboutSecret) };
+  return source.arguments ? { ...stored, arguments: withoutSecretArguments(source.arguments, warnAboutSecret) } : stored;
+}
+
+function parseToolArguments(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ContractError('--args must be valid JSON');
   }
-  return url.origin + url.pathname + (parts.length ? '?' + parts.join('&') : '');
 }
 
 function sourceFromTarget(target, values) {
   if (values.mcp) {
     if (!values.tool) throw new ContractError('--mcp needs --tool');
-    return { type: 'mcp', url: values.mcp, tool: values.tool, arguments: values.args ? JSON.parse(values.args) : {} };
+    return { type: 'mcp', url: values.mcp, tool: values.tool, arguments: values.args ? parseToolArguments(values.args) : {} };
   }
   if (!target) throw new ContractError('learn needs a URL, a file, --mcp or --observed');
   return /^https?:\/\//.test(target) ? { type: 'http', url: target } : { type: 'file', path: target };
@@ -109,8 +107,7 @@ async function runLearn(values, targets) {
   const doc = await loadDocument(source);
   const profile = profileDocument(doc, { itemsPath: values.items });
   const fields = values.fields?.split(',').map((field) => field.trim());
-  const stored = source.url ? { ...source, url: withoutSecrets(source.url) } : source;
-  return write(serializeContract(learnContract([profile], { name: values.name, source: stored, fields })), values.out);
+  return write(serializeContract(learnContract([profile], { name: values.name, source: storedSource(source), fields })), values.out);
 }
 
 async function checkOne(file) {
@@ -144,6 +141,6 @@ async function main() {
 
 main().catch((error) => {
   const expected = error instanceof ContractError || error instanceof SourceError || error.code?.startsWith?.('ERR_PARSE_ARGS') || error.code === 'ENOENT';
-  console.error(`driftprobe: ${expected ? error.message : error.stack}`);
+  console.error(`driftprobe: ${neutralizeCommands(expected ? error.message : error.stack)}`);
   process.exitCode = 2;
 });

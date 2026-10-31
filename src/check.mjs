@@ -8,6 +8,12 @@ const percent = (share) => `${Math.round(share * 100)}%`;
 const violation = (field, rule, expected, actual, message) => ({ field, rule, expected, actual, message });
 const readableAge = (hours) => (hours >= 72 ? `${Math.round(hours / 24)} days` : `${hours} hours`);
 
+// Listing a field means needing it. Only min_coverage: 0 makes it optional.
+function checkPresence(name, rule, stats) {
+  if (rule.min_coverage !== undefined || stats?.usable) return null;
+  return violation(name, 'present', true, 0, `${name}: no item carries a value`);
+}
+
 function checkCoverage(name, rule, stats, itemCount) {
   if (rule.min_coverage === undefined) return null;
   const coverage = stats ? stats.usable / itemCount : 0;
@@ -55,6 +61,7 @@ function checkDistinct(name, rule, stats) {
 function checkField(name, rule, profile) {
   const stats = profile.fields[name];
   return [
+    checkPresence(name, rule, stats),
     checkCoverage(name, rule, stats, profile.itemCount),
     checkType(name, rule, stats),
     checkFreshness(name, rule, stats),
@@ -66,7 +73,8 @@ export function checkProfile(contract, profile) {
   const { min_items: minItems = 1, fields = {} } = contract.expect ?? {};
   const violations = [];
   if (profile.itemCount < minItems) {
-    const reason = profile.itemsMissing ? `"${contract.items}" is missing from the response` : `got ${profile.itemCount}`;
+    const list = contract.items ? `"${contract.items}"` : 'the list';
+    const reason = profile.itemsMissing ? `${list} is missing from the response` : `got ${profile.itemCount}`;
     violations.push(violation(null, 'min_items', minItems, profile.itemCount, `expected at least ${minItems} items, ${reason}`));
   }
   if (profile.itemCount > 0) {

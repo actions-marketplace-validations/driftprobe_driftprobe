@@ -2,15 +2,16 @@
 // and writes down the shape of each response: this is how a contract is learned from real calls.
 import http from 'node:http';
 import { once } from 'node:events';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { profileDocument } from './profile.mjs';
 import { classifyError, payloadFromToolResult } from './mcp.mjs';
+import { TOKEN_PREFIX_RE } from './secrets.mjs';
 
 const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
+const MAX_OBSERVED_BYTES = 50 * 1024 * 1024;
 // Only segments that read as route names survive: an id or a token in a URL must not become a contract name.
 const ROUTE_WORD_RE = /^(?:[a-z][a-z_-]{0,19}|v\d+(?:\.\d+)?)$/i;
-const TOKEN_PREFIX_RE = /^(?:sk|pk|rk|xox[a-z]?|gh[pousr]|bot)[-_]/i;
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'te', 'upgrade', 'proxy-authorization', 'proxy-authenticate', 'trailer', 'host', 'content-length']);
 // fetch has already decoded the body, so its original encoding headers no longer apply.
@@ -90,7 +91,6 @@ async function relay(response, res) {
     if (captured < MAX_CAPTURE_BYTES) chunks.push(chunk);
     captured += chunk.length;
   }
-  res.end();
   return captured <= MAX_CAPTURE_BYTES ? Buffer.concat(chunks).toString('utf8') : null;
 }
 
@@ -112,15 +112,26 @@ function refuse(res, status, message) {
   res.end(JSON.stringify({ error: message }));
 }
 
-async function recordShape({ req, body, response, text, out }) {
+// Keeps one previous generation, so that a proxy left running cannot fill the disk.
+async function appendObservation(out, line, maxBytes) {
+  const size = await stat(out).then((stats) => stats.size, () => 0);
+  if (size >= maxBytes) {
+    await rename(out, `${out}.1`).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+  await appendFile(out, line);
+}
+
+async function recordShape({ req, body, response, text, out, maxObservedBytes }) {
   const key = keyForRequest(req.method, req.url, body.toString('utf8'));
   if (!key || text === null || !response.ok) return;
   const doc = documentFromResponse(key, response.headers.get('content-type') ?? '', text);
   if (doc === undefined) return;
-  await appendFile(out, `${JSON.stringify({ at: new Date().toISOString(), key, profile: profileDocument(doc) })}\n`);
+  await appendObservation(out, `${JSON.stringify({ at: new Date().toISOString(), key, profile: profileDocument(doc) })}\n`, maxObservedBytes);
 }
 
-async function handle({ upstream, out, onError }, req, res) {
+async function handle({ upstream, out, onError, maxObservedBytes }, req, res) {
   if (!isLocalRequest(req)) return refuse(res, 403, 'driftprobe only answers local requests');
   const body = await readBody(req);
   const abort = new AbortController();
@@ -144,14 +155,17 @@ async function handle({ upstream, out, onError }, req, res) {
     res.destroy();
     return undefined;
   }
-  return recordShape({ req, body, response, text, out }).catch(onError);
+  // Written before the response ends: once the agent has its answer, the observation exists.
+  await recordShape({ req, body, response, text, out, maxObservedBytes }).catch(onError);
+  res.end();
+  return undefined;
 }
 
 /** Listens on loopback only: the proxy sees the agent's credentials and must not be reachable from outside. */
-export async function startRecorder({ upstream, port = 8787, out, onError = (error) => console.error(`driftprobe: ${error.message}`) }) {
+export async function startRecorder({ upstream, port = 8787, out, maxObservedBytes = MAX_OBSERVED_BYTES, onError = (error) => console.error(`driftprobe: ${error.message}`) }) {
   await mkdir(dirname(out), { recursive: true });
   const server = http.createServer((req, res) => {
-    handle({ upstream, out, onError }, req, res).catch((error) => {
+    handle({ upstream, out, onError, maxObservedBytes }, req, res).catch((error) => {
       onError(error);
       if (!res.headersSent) res.writeHead(500);
       res.end();
