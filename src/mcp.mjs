@@ -2,8 +2,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { readFileSync } from 'node:fs';
 
-export const CLIENT_INFO = { name: 'driftprobe', version: '0.1.0' };
+const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+export const CLIENT_INFO = { name: 'driftprobe', version };
 const REQUEST_TIMEOUT_CODE = -32001;
 const INVALID_PARAMS_CODE = -32602;
 const MAX_TOOL_PAGES = 5;
