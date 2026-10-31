@@ -14,6 +14,8 @@ const LOCAL_FAILURE_SHARE = 0.5;
 const MAX_EXAMPLES = 5;
 // Failures that say something about our side, never about the server.
 const OUR_FAULT = new Set(['internal', 'worker_crash', 'out_of_memory']);
+// A key or a quota of ours (keyed panel). They say nothing about the source, nor about our connection.
+const ACCOUNT_FAULT = new Set(['key_refused', 'quota']);
 
 function learnBaseline(server, usable) {
   const rows = usable.slice(0, BASELINE_RUNS);
@@ -77,10 +79,18 @@ function analyseServer(server, rows) {
 /** Rounds where most of the panel failed at once say our connection was down: they are set aside. */
 function excludeLocalFailures(rows) {
   const excludedRounds = new Set();
-  for (const [at, round] of Map.groupBy(rows, (row) => row.at)) {
+  const judged = rows.filter((row) => !ACCOUNT_FAULT.has(row.error));
+  for (const [at, round] of Map.groupBy(judged, (row) => row.at)) {
     if (round.filter((row) => !row.ok).length / round.length >= LOCAL_FAILURE_SHARE) excludedRounds.add(at);
   }
-  return { kept: rows.filter((row) => !excludedRounds.has(row.at) && !OUR_FAULT.has(row.error)), excludedRounds: excludedRounds.size };
+  return { kept: judged.filter((row) => !excludedRounds.has(row.at) && !OUR_FAULT.has(row.error)), excludedRounds: excludedRounds.size };
+}
+
+/** A source we could not ask must stay visible: it has no detail of its own. */
+function countAccountFaults(rows) {
+  const counts = {};
+  for (const row of rows) if (ACCOUNT_FAULT.has(row.error)) counts[row.server] = (counts[row.server] ?? 0) + 1;
+  return counts;
 }
 
 /** Pure on purpose, so that the published numbers can be recomputed and tested. */
@@ -93,6 +103,7 @@ export function analyse(allRows) {
     observations: kept.length,
     excludedRounds,
     excludedRows: allRows.length - kept.length,
+    accountFaults: countAccountFaults(allRows),
     withBaseline: count((detail) => detail.baselineReady),
     withOutage: count((detail) => detail.outages > 0),
     withToolError: count((detail) => detail.toolErrors > 0),
@@ -115,7 +126,8 @@ export async function readObservations(dir) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const dir = join(dirname(fileURLToPath(import.meta.url)), 'data');
+  // `node analyse.mjs keyed` reads the second panel.
+  const dir = join(dirname(fileURLToPath(import.meta.url)), 'data', process.argv[2] ?? '');
   const { rows, skipped } = await readObservations(dir);
   if (skipped) console.warn(`${skipped} corrupt line(s) skipped`);
   const result = analyse(rows);
