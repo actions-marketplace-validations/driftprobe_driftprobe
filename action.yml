@@ -1,0 +1,23 @@
+name: driftprobe
+description: Fail the build when an API or MCP tool your agent depends on still answers, but no longer delivers the data your agent needs.
+branding:
+  icon: activity
+  color: orange
+inputs:
+  contracts:
+    description: Contract files to check (shell glob, space separated)
+    default: contracts/*.yaml
+  version:
+    description: driftprobe version to run
+    default: latest
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 22
+    - shell: bash
+      env:
+        DRIFTPROBE_VERSION: ${{ inputs.version }}
+        DRIFTPROBE_CONTRACTS: ${{ inputs.contracts }}
+      run: npx --yes "driftprobe@${DRIFTPROBE_VERSION}" check --github ${DRIFTPROBE_CONTRACTS}

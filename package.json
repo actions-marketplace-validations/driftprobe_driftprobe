@@ -1,0 +1,46 @@
+{
+  "name": "driftprobe",
+  "version": "0.1.0",
+  "description": "Continuous data contract tests for AI agents: catch the API or MCP tool that still answers 200 but no longer delivers what your agent needs.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/driftprobe/driftprobe.git"
+  },
+  "homepage": "https://github.com/driftprobe/driftprobe#readme",
+  "bugs": {
+    "url": "https://github.com/driftprobe/driftprobe/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "data-contracts",
+    "api-testing",
+    "monitoring",
+    "llm",
+    "cli"
+  ],
+  "bin": {
+    "driftprobe": "bin/driftprobe.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "undici": "^8.12.3",
+    "zod": "^4.6.7"
+  }
+}
